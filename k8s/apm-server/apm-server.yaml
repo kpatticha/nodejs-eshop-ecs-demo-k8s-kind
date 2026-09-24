@@ -1,0 +1,172 @@
+# APM Server for the ecs-eshop demo.
+#
+# Lives in kube-system, not ecs-eshop, so it can share the Secret
+# `elasticsearch-credentials` with the Elastic Agent DaemonSet - both ship
+# straight to the same remote Elasticsearch. Template for that Secret:
+# k8s/common/elasticsearch-secret.example.yaml.
+#
+# The image tag is pinned literally. Keep it at or below your remote
+# Elasticsearch version - the same rule the vendored Elastic Agent follows.
+#
+# The config below uses ${VAR} expansion, which apm-server resolves from the
+# process environment. A missing variable is a hard startup error.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apm-server
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: apm-server
+data:
+  apm-server.yml: |-
+    apm-server:
+      host: "0.0.0.0:8200"
+      auth:
+        secret_token: "${SECRET_TOKEN}"
+      # No RUM: nothing in this demo loads a browser agent, and the Service is
+      # ClusterIP-only so a browser could not reach it anyway. Enabling RUM
+      # would also auto-enable anonymous auth alongside the secret token.
+      rum:
+        enabled: false
+    # Do not self-instrument: keeps Kibana APM showing only the two ecs-*
+    # services. (Also the default; set explicitly so it is obvious.)
+    instrumentation:
+      enabled: false
+    output.elasticsearch:
+      hosts:
+        - "${ES_HOST}"
+      username: "${ES_USERNAME}"
+      password: "${ES_PASSWORD}"
+      # No ssl settings for Elastic Cloud endpoints: they use a publicly
+      # trusted CA and the image carries the system CA bundle. For a
+      # self-signed cluster add `ssl.ca_trusted_fingerprint` here.
+    logging:
+      level: info
+      # The periodic "Non-zero metrics in the last 30s" lines are the easiest
+      # way to confirm events are being accepted and published - keep them.
+      metrics:
+        enabled: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apm-server
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: apm-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: apm-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: apm-server
+    spec:
+      containers:
+        - name: apm-server
+          image: docker.elastic.co/apm/apm-server:9.5.4
+          # The image ENTRYPOINT is
+          #   apm-server --environment=container
+          # which already logs to stderr and already sets BEAT_STRICT_PERMS=false,
+          # so neither -e nor --strict.perms=false is needed. -c is passed
+          # explicitly so the mounted config path is visible here.
+          args: ["-c", "/usr/share/apm-server/apm-server.yml"]
+          ports:
+            - name: http
+              containerPort: 8200
+          env:
+            # Elasticsearch credentials: the SAME Secret the Elastic Agent
+            # DaemonSet uses (k8s/common/elasticsearch-secret.example.yaml).
+            - name: ES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: es-host
+            - name: ES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: username
+            - name: ES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: password
+            # Shared with the Node.js services via the kube-system copy of
+            # Secret apm-credentials (k8s/apm-secret.example.yaml, document 2).
+            - name: SECRET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: apm-credentials
+                  key: secret-token
+          volumeMounts:
+            # subPath is required: /usr/share/apm-server also holds the binary
+            # and the writable data/ dir, which a directory mount would shadow.
+            # The trade-off is that kubelet never refreshes a subPath mount, so
+            # config changes need `./scripts/apm-server.sh restart`.
+            - name: config
+              mountPath: /usr/share/apm-server/apm-server.yml
+              subPath: apm-server.yml
+              readOnly: true
+          # GET / is the root information endpoint and answers 200 even when a
+          # secret token is configured (empty body when unauthenticated), so a
+          # plain httpGet probe works and is better than tcpSocket - it proves
+          # the HTTP mux is up, not just that the port is bound. It
+          # deliberately does not reflect Elasticsearch reachability, so a
+          # remote-ES blip cannot restart the pod.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            # Matches the image's own USER apm-server (uid/gid 1000). Spelled
+            # out so runAsNonRoot is decidable without resolving a username.
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # No readOnlyRootFilesystem: apm-server writes path.data
+            # (/usr/share/apm-server/data - uuid and meta files).
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: apm-server
+            defaultMode: 0644
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apm-server
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: apm-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: apm-server
+  ports:
+    - name: http
+      port: 8200
+      targetPort: http

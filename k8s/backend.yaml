@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecs-eshop-backend
+  namespace: ecs-eshop
+  labels:
+    app: ecs-eshop-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ecs-eshop-backend
+  template:
+    metadata:
+      labels:
+        app: ecs-eshop-backend
+    spec:
+      containers:
+        - name: backend
+          image: ecs-eshop-backend:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            # Kubernetes metadata for the APM agent. On cgroup v2 (kind,
+            # modern Docker Desktop) /proc/self/cgroup is just "0::/", so the
+            # agent cannot auto-detect the pod - without these, traces carry no
+            # kubernetes.* fields and Kibana APM cannot correlate the service
+            # with its pod. The agent reads exactly these four variable names.
+            - name: KUBERNETES_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: KUBERNETES_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KUBERNETES_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ELASTIC_APM_SERVICE_NAME
+              value: ecs-eshop-backend
+            - name: ELASTIC_APM_ENVIRONMENT
+              value: kind-local
+            - name: ELASTIC_APM_LOG_LEVEL
+              value: info
+            - name: ELASTIC_APM_ACTIVE
+              valueFrom:
+                secretKeyRef:
+                  name: apm-credentials
+                  key: active
+            - name: ELASTIC_APM_SERVER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: apm-credentials
+                  key: server-url
+            - name: ELASTIC_APM_SECRET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: apm-credentials
+                  key: secret-token
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ecs-backend
+  namespace: ecs-eshop
+spec:
+  type: ClusterIP
+  selector:
+    app: ecs-eshop-backend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

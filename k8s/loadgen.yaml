@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecs-loadgen
+  namespace: ecs-eshop
+  labels:
+    app: ecs-loadgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ecs-loadgen
+  template:
+    metadata:
+      labels:
+        app: ecs-loadgen
+    spec:
+      containers:
+        - name: loadgen
+          image: curlimages/curl:8.11.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -u
+              TARGET="http://ecs-frontend.ecs-eshop.svc.cluster.local:3000"
+              while true; do
+                for path in / /api/products; do
+                  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$TARGET$path" || echo "err")
+                  echo "$(date -u +%H:%M:%S) GET $path -> $code"
+                done
+                sleep 2
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi

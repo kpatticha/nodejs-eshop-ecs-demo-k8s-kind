@@ -1,0 +1,10 @@
+node_modules/
+npm-debug.log*
+
+# Real APM credentials - never commit. Template: k8s/apm-secret.example.yaml
+k8s/apm-secret.yaml
+
+# Real Elasticsearch credentials, shared by the Elastic Agent and the APM
+# Server - never commit.
+# Template: k8s/common/elasticsearch-secret.example.yaml
+k8s/common/elasticsearch-secret.yaml
