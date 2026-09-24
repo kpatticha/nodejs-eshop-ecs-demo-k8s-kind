@@ -9,6 +9,8 @@ CONTEXT=${CONTEXT:-kind-$CLUSTER}
 TAG=${TAG:-dev}
 BACKEND_IMG="ecs-eshop-backend:$TAG"
 FRONTEND_IMG="ecs-eshop-frontend:$TAG"
+# Shared by the APM Server and the Elastic Agent; gitignored.
+ES_SECRET=k8s/common/elasticsearch-secret.yaml
 
 cd "$(dirname "$0")/.."
 
@@ -52,9 +54,26 @@ kube -n "$NAMESPACE" rollout status deployment/ecs-loadgen --timeout=120s
 
 kube -n "$NAMESPACE" get pods -o wide
 
+# The Elastic side is deployed only once you have credentials - both scripts
+# hard-fail without them, and setup.sh has to work for someone who just wants
+# to see the storefront. Doing it here means recreating the cluster brings the
+# agent and APM Server back too, instead of silently leaving them behind.
+if [ -f "$ES_SECRET" ]; then
+  echo ""
+  echo "==> Elastic ($ES_SECRET found)"
+  ./scripts/apm-server.sh apply
+  ./scripts/agent.sh apply
+else
+  ELASTIC_SKIPPED=1
+fi
+
 echo ""
 echo "Storefront: http://localhost:8080"
-echo ""
-echo "The services are configured to send APM data to the in-cluster APM Server."
-echo "If it is not deployed yet, run ./scripts/apm-server.sh apply - until then"
-echo "the APM agents log connection errors. The storefront is unaffected."
+if [ -n "${ELASTIC_SKIPPED:-}" ]; then
+  echo ""
+  echo "$ES_SECRET not found, so the APM Server and Elastic Agent were skipped."
+  echo "The services are still configured to send APM data to the in-cluster APM"
+  echo "Server, so their agents will log connection errors until it exists."
+  echo "To deploy both, copy k8s/common/elasticsearch-secret.example.yaml to"
+  echo "$ES_SECRET, fill it in, and re-run this script (see APM_SERVER.md)."
+fi

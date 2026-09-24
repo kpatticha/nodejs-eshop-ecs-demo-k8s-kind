@@ -21,8 +21,6 @@ Elasticsearch credentials from **one** shared Secret,
 
 ## Steps
 
-## Steps
-
 **1. Set up remote Elasticsearch and local Kibana** — use the OTel demo's runbook:
 
 [REMOTE_ES_ELASTIC_AGENT_LOCAL_KIBANA.md](https://github.com/kpatticha/nodejs-eshop-otel-demo-k8s-kind/blob/main/REMOTE_ES_ELASTIC_AGENT_LOCAL_KIBANA.md)
@@ -41,7 +39,7 @@ cp k8s/common/elasticsearch-secret.example.yaml k8s/common/elasticsearch-secret.
 
 All you need is the **Elasticsearch URL and password** (you can use the same ones from kibana.yml)
 
-**2. Deploy the demo services.** Run this from the repository root:
+**3. Deploy the demo services.** Run this from the repository root:
 
 ```bash
 ./scripts/setup.sh
@@ -50,6 +48,33 @@ All you need is the **Elasticsearch URL and password** (you can use the same one
 This creates the kind cluster, builds and deploys the frontend and backend, and
 starts the built-in load generator. See [RUN_DEMO_SERVICES.md](RUN_DEMO_SERVICES.md)
 for details.
+
+**4. Deploy the Elastic components**
+
+```bash
+./scripts/apm-server.sh apply
+```
+
+```bash
+./scripts/agent.sh apply
+```
+
+`apm-server.sh` runs the APM Server that receives the traces from the two
+services ([APM_SERVER.md](APM_SERVER.md)); `agent.sh` runs Elastic Agent
+standalone plus kube-state-metrics for Kubernetes metrics and container logs
+([K8S_MONITORING.md](K8S_MONITORING.md)). Both read the credentials from step 2.
+
+`./scripts/setup.sh` already runs these two for you whenever
+`k8s/common/elasticsearch-secret.yaml` exists, so after a cluster rebuild you
+normally only need step 3. Run them individually to redeploy just one, or after
+creating the credentials file for the first time.
+
+Each script also takes `status`, `logs`, `restart` and `down`:
+
+```bash
+./scripts/apm-server.sh status
+./scripts/agent.sh logs
+```
 
 -
 
